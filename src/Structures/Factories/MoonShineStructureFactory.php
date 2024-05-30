@@ -4,23 +4,16 @@ declare(strict_types=1);
 
 namespace DevLnk\MoonShineBuilder\Structures\Factories;
 
-use DevLnk\MoonShineBuilder\Structures\MainStructure;
 use DevLnk\MoonShineBuilder\Exceptions\ProjectBuilderException;
-use DevLnk\MoonShineBuilder\Traits\Makeable;
+use DevLnk\MoonShineBuilder\Structures\CodeStructureList;
 
-final class StructureFactory
+final class MoonShineStructureFactory
 {
-    use Makeable;
-
     /**
      * @throws ProjectBuilderException
      */
-    public function getStructure(string $target, string $type): MainStructure
+    public function getStructures(string $target): CodeStructureList
     {
-        if($type === 'table') {
-            return StructureFromTable::make($target)->makeStructure();
-        }
-
         $path = config('moonshine_builder.builds_dir') . '/' . $target;
 
         if(! file_exists($path)) {
@@ -30,7 +23,7 @@ final class StructureFactory
         $extension = pathinfo($path, PATHINFO_EXTENSION);
 
         return match ($extension) {
-            'json' => StructureFromJson::make($path)->makeStructure(),
+            'json' => StructureFromJson::make($path)->makeStructures(),
             default => throw new ProjectBuilderException("$extension extension is not supported")
         };
     }

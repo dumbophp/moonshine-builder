@@ -5,20 +5,20 @@ declare(strict_types=1);
 namespace {namespace};
 
 use Illuminate\Database\Eloquent\Model;
-use {model-namespace};
+use {model_namespace};
 
 use MoonShine\Resources\ModelResource;
 use MoonShine\Decorations\Block;
-{uses}
+{field_uses}
 
 /**
  * @extends ModelResource<{model}>
  */
-class DummyResource extends ModelResource
+class {class} extends ModelResource
 {
     protected string $model = {model}::class;
 
-    protected string $title = 'DummyTitle';{column}
+    protected string $title = '{class}';{column}
 
     public function fields(): array
     {

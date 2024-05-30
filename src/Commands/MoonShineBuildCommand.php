@@ -2,30 +2,96 @@
 
 namespace DevLnk\MoonShineBuilder\Commands;
 
+use DevLnk\LaravelCodeBuilder\Commands\LaravelCodeBuildCommand;
+use DevLnk\LaravelCodeBuilder\Exceptions\CodeGenerateCommandException;
+use DevLnk\LaravelCodeBuilder\Services\CodePath\CodePathContract;
+use DevLnk\LaravelCodeBuilder\Services\CodeStructure\CodeStructure;
+use DevLnk\LaravelCodeBuilder\Services\CodeStructure\Factories\CodeStructureFromMysql;
+use DevLnk\LaravelCodeBuilder\Services\StubBuilder;
+use DevLnk\MoonShineBuilder\Enums\MoonShineBuildType;
 use DevLnk\MoonShineBuilder\Exceptions\ProjectBuilderException;
-use DevLnk\MoonShineBuilder\Structures\Factories\StructureFactory;
-use DevLnk\MoonShineBuilder\Structures\ResourceStructure;
+use DevLnk\MoonShineBuilder\Services\CodePath\MoonShineCodePath;
+use DevLnk\MoonShineBuilder\Structures\Factories\MoonShineStructureFactory;
+use DevLnk\MoonShineBuilder\Traits\CommandVariables;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
-use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
-use MoonShine\Commands\MoonShineCommand;
-use MoonShine\MoonShine;
+
+use function Laravel\Prompts\{note, select};
+
 use SplFileInfo;
 
-use function Laravel\Prompts\{select, note, confirm};
-
-class MoonShineBuildCommand extends MoonShineCommand
+class MoonShineBuildCommand extends LaravelCodeBuildCommand
 {
+    use CommandVariables;
+
     protected $signature = 'moonshine:build {target?} {--type=}';
 
-    protected string $stubsDir = __DIR__ . '/../../stubs';
+    protected int $iterations = 0;
 
     /**
-     * @throws FileNotFoundException
+     * @var array<int, string>
+     */
+    protected array $reminderResourceInfo = [];
+
+    /**
+     * @var array<int, string>
+     */
+    protected array $reminderMenuInfo = [];
+
+    /**
+     * @throws CodeGenerateCommandException
      * @throws ProjectBuilderException
      */
     public function handle(): int
+    {
+        $this->setStubDir();
+
+        $this->prepareBuilders();
+
+        $codeStructures = $this->codeStructures();
+
+        $generationPath = $this->generationPath();
+
+        foreach ($codeStructures as $codeStructure) {
+            $this->make($codeStructure, $generationPath);
+        }
+
+        $this->resourceInfo();
+
+        $this->components->info('All done');
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * @throws CodeGenerateCommandException
+     * @throws FileNotFoundException
+     */
+    protected function buildCode(CodeStructure $codeStructure, CodePathContract $codePath): void
+    {
+        parent::buildCode($codeStructure, $codePath);
+
+        if(! in_array(MoonShineBuildType::RESOURCE, $this->builders)) {
+            return;
+        }
+
+        $resourcePath = $codePath->path(MoonShineBuildType::RESOURCE->value);
+
+        $this->reminderResourceInfo[] = "new {$resourcePath->rawName()}(),";
+        $this->reminderMenuInfo[] = StubBuilder::make($this->stubDir . 'MenuItem')
+            ->getFromStub([
+                '{resource}' => $resourcePath->rawName(),
+            ])
+        ;
+    }
+
+    /**
+     * @return array<int, CodeStructure>
+     *
+     * @throws ProjectBuilderException
+     */
+    protected function codeStructures(): array
     {
         $target = $this->argument('target');
 
@@ -42,67 +108,53 @@ class MoonShineBuildCommand extends MoonShineCommand
             );
         }
 
-        if (is_null($target) && $type === 'table') {
+        if ($type === 'table') {
             $target = select(
                 'Table',
-                collect(Schema::getTables())->map(fn ($v) => $v['name']),
+                collect(Schema::getTables())
+                    ->filter(fn ($v) => str_contains((string) $v['name'], (string) $target ?? ''))
+                    ->mapWithKeys(fn ($v) => [$v['name'] => $v['name']]),
+                default: 'jobs'
             );
         }
-
-        $mainStructure = StructureFactory::make()
-            ->getStructure($target, $type);
 
         if($type === 'table') {
-            $mainStructure->setWithModel(
-                confirm('Make model?', default: false, hint: 'If the model exists, it will be overwritten')
-            );
+            $this->builders = array_filter($this->builders, fn ($item) => $item !== MoonShineBuildType::MIGRATION);
+
+            return [
+                CodeStructureFromMysql::make(
+                    table: (string) $target,
+                    entity: $target,
+                    isBelongsTo: true,
+                    hasMany: [],
+                    hasOne: [],
+                    belongsToMany: []
+                ),
+            ];
         }
 
-        $reminderResourceInfo = [];
-        $reminderMenuInfo = [];
+        $codeStructures = (new MoonShineStructureFactory())->getStructures($target);
 
-        foreach ($mainStructure->resources() as $index => $resource) {
-            $this->components->task("app/MoonShine/Resources/{$resource->resourceName()} is created...");
-
-            if ($mainStructure->withModel()) {
-                $this->createModel($resource);
-            }
-
-            if ($mainStructure->withMigration()) {
-                $this->createMigration($resource, $index);
-            }
-
-            if ($mainStructure->withResource()) {
-                $this->createResource($resource);
-                $reminderResourceInfo[] = "new {$resource->resourceName()}(),";
-                $reminderMenuInfo[] = $this->replaceInStub('MenuItem', [
-                    '{resource}' => $resource->name()->ucFirst(),
-                ]);
-            }
+        if(! $codeStructures->withModel()) {
+            $this->builders = array_filter($this->builders, fn ($item) => $item !== MoonShineBuildType::MODEL);
         }
 
-        $this->components->warn("Don't forget to register new resources in the provider method:");
+        if(! $codeStructures->withMigration()) {
+            $this->builders = array_filter($this->builders, fn ($item) => $item !== MoonShineBuildType::MIGRATION);
+        }
 
-        $code = implode(PHP_EOL, $reminderResourceInfo);
+        if(! $codeStructures->withResource()) {
+            $this->builders = array_filter($this->builders, fn ($item) => $item !== MoonShineBuildType::RESOURCE);
+        }
 
-        note($code);
-
-        note("...or in the menu method:");
-
-        $code = implode(PHP_EOL, $reminderMenuInfo);
-
-        note($code);
-
-        $this->components->info('All done');
-
-        return self::SUCCESS;
+        return $codeStructures->codeStructures();
     }
 
-    private function getType(?string $target): string
+    protected function getType(?string $target): string
     {
         if (! $this->option('type') && ! is_null($target)) {
             $availableTypes = [
-                'json'
+                'json',
             ];
 
             $fileSeparate = explode('.', $target);
@@ -116,116 +168,29 @@ class MoonShineBuildCommand extends MoonShineCommand
         return $this->option('type') ?? select('Type', ['json', 'table']);
     }
 
-    /**
-     * @throws FileNotFoundException
-     */
-    private function createModel(ResourceStructure $resourceStructure): void
+    protected function codePath(): CodePathContract
     {
-        $modelName = $resourceStructure->name()->ucFirst();
+        $codePath = new MoonShineCodePath($this->iterations);
+        $this->iterations++;
 
-        $path = base_path("app/Models/$modelName.php");
-
-        $fillable = $resourceStructure->fieldsToModel();
-
-        $relationUses = $resourceStructure->relationUses();
-
-        $relationsBlock = '';
-
-        if (! empty($resourceStructure->relationFields())) {
-            foreach ($resourceStructure->relationsData() as $relationsData) {
-                $relationsBlock .= str($this->replaceInStub($relationsData['stub'], [
-                    '{relation}' => $relationsData['relation'],
-                    '{relation_model}' => $relationsData['relation_model'],
-                ]))
-                    ->prepend("\n")
-                    ->prepend("\n")
-                    ->value();
-            }
-        }
-
-        $useSoftDeletes = '';
-        $softDeletes = '';
-        if($resourceStructure->isSoftDeletes()) {
-            $useSoftDeletes = "\nuse Illuminate\Database\Eloquent\SoftDeletes;";
-            $softDeletes = "\n\tuse SoftDeletes;";
-        }
-
-        $timestamps = (! $resourceStructure->isTimestamps())
-            ? "\n\tpublic \$timestamps = false;"
-            : '';
-
-        $this->copyStub('Model', $path, [
-            '{namespace}' => 'App\Models',
-            '{use_soft_deletes}' => $useSoftDeletes,
-            '{class}' => $modelName,
-            '{timestamps}' => $timestamps,
-            '{soft_deletes}' => $softDeletes,
-            '{fillable}' => $fillable,
-            '{relation_uses}' => $relationUses,
-            '{relations_block}' => $relationsBlock,
-        ]);
-
-        $this->components->task("Model App\\Models\\$modelName created successfully");
+        return $codePath;
     }
 
-    /**
-     * @throws FileNotFoundException
-     */
-    private function createMigration(ResourceStructure $resourceStructure, int $index): void
+    protected function resourceInfo(): void
     {
-        $table = $resourceStructure->name()->plural();
+        if(! in_array(MoonShineBuildType::RESOURCE, $this->builders)) {
+            return;
+        }
 
-        // TODO подумать как сделать рефакторинг $index
-        $migrationPath = 'database/migrations/' . date('Y_m_d_His') . '_' . $index . '_create_' . $table . '.php';
+        $this->components->warn(
+            "Don't forget to register new resources in the provider method:"
+        );
+        $code = implode(PHP_EOL, $this->reminderResourceInfo);
+        note($code);
 
-        $path = base_path($migrationPath);
+        note("...or in the menu method:");
 
-        $columns = $resourceStructure->fieldsToMigration();
-
-        $timestamps = $resourceStructure->isTimestamps()
-            ? "\n\t\t\t\$table->timestamps();"
-            : '';
-
-        $softDeletes = $resourceStructure->isSoftDeletes()
-            ? "\n\t\t\t\$table->softDeletes();"
-            : '';
-
-        $this->copyStub('Migration', $path, [
-            '{table}' => $table,
-            '{columns}' => $columns,
-            '{timestamps}' => $timestamps,
-            '{soft_deletes}' => $softDeletes,
-        ]);
-
-        $this->components->task("Migration $migrationPath created successfully");
-    }
-
-    /**
-     * @throws FileNotFoundException
-     */
-    private function createResource(ResourceStructure $resourceStructure): void
-    {
-        $name = $resourceStructure->resourceName();
-
-        $model = $this->qualifyModel($resourceStructure->name()->ucFirst());
-
-        $path = base_path("app/MoonShine/Resources/$name.php");
-
-        $fieldsUses = $resourceStructure->usesFieldsToResource();
-
-        $fields = $resourceStructure->fieldsToResources();
-
-        $this->copyStub('ModelResourceDefault', $path, [
-            '{namespace}' => MoonShine::namespace('\Resources'),
-            '{model-namespace}' => $model,
-            '{uses}' => $fieldsUses,
-            '{column}' => $resourceStructure->columnToResource(),
-            '{fields}' => $fields,
-            '{model}' => class_basename($model),
-            'DummyTitle' => class_basename($model),
-            'Dummy' => $resourceStructure->name()->ucFirst(),
-        ]);
-
-        $this->components->task("app/MoonShine/Resources/{$resourceStructure->resourceName()} created successfully");
+        $code = implode(PHP_EOL, $this->reminderMenuInfo);
+        note($code);
     }
 }

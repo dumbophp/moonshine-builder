@@ -2,9 +2,17 @@
 
 ## Creating projects using schemas for the [MoonShine](https://github.com/moonshine-software/moonshine).
 
+[![Latest Stable Version](https://img.shields.io/packagist/v/dev-lnk/moonshine-builder)](https://packagist.org/packages/dev-lnk/moonshine-builder)
+[![Total Downloads](https://img.shields.io/packagist/dt/dev-lnk/moonshine-builder)](https://packagist.org/packages/dev-lnk/moonshine-builder)
+[![tests](https://raw.githubusercontent.com/dev-lnk/moonshine-builder/0c267c4601af644378e1d50acc4aa4ce6bac79d6/.github/tests/badge.svg)](https://github.com/dev-lnk/moonshine-builder/actions)
+[![License](https://img.shields.io/packagist/l/dev-lnk/moonshine-builder)](https://packagist.org/packages/dev-lnk/moonshine-builder)\
+[![Laravel required](https://img.shields.io/badge/Laravel-10+-FF2D20?style=for-the-badge&logo=laravel)](https://laravel.com)
+[![PHP required](https://img.shields.io/badge/PHP-8.2+-777BB4?style=for-the-badge&logo=php)](https://www.php.net/manual/)
+[![MoonShine required](https://img.shields.io/badge/Moonshine-2.10+-1B253B?style=for-the-badge)](https://github.com/moonshine-software/moonshine)
+
 #### Hello, Laravel and MoonShine User!
 
-This package allows you to describe the entire project structure using a JSON schema and generate necessary files such as:
+This package allows you to describe the entire project structure using a JSON or SQL table schema and generate the necessary files, such as:
 <ul>
     <li>Models</li>
     <li>Migrations</li>
@@ -13,7 +21,7 @@ This package allows you to describe the entire project structure using a JSON sc
 
 ### Installation:
 ```shell
-composer require dev-lnk/moonshine-builder
+composer require dev-lnk/moonshine-builder --dev
 ```
 ### Configuration:
 Publish the package configuration file:
@@ -35,14 +43,37 @@ php artisan moonshine:build
 ```
 You will be given options as to which scheme to use when generating the code, form example:
 
-![img1](https://raw.githubusercontent.com/dev-lnk/moonshine-builder/master/examples/img_1.png)
+```shell
+ ┌ Type ────────────────────────────────────────────────────────┐
+ │ › ● json                                                     │
+ │   ○ table                                                    │
+ └──────────────────────────────────────────────────────────────┘
+```
+```shell
+ ┌ File ────────────────────────────────────────────────────────┐
+ │ › ● category.json                                            │
+ │   ○ project.json                                             │
+ └──────────────────────────────────────────────────────────────┘
+```
+```shell
+app/Models/Category.php was created successfully!
+app/MoonShine/Resources/CategoryResource.php was created successfully!
+var/www/moonshine-builder/database/migrations/2024_05_27_140239_create_categories.php was created successfully!
 
-![img2](https://raw.githubusercontent.com/dev-lnk/moonshine-builder/master/examples/img_2.png)
+WARN  Don't forget to register new resources in the provider method:
 
-![img3](https://raw.githubusercontent.com/dev-lnk/moonshine-builder/master/examples/img_3.png)
+ new CategoryResource(),
 
-![img4](https://raw.githubusercontent.com/dev-lnk/moonshine-builder/master/examples/img_4.png)
+ ...or in the menu method:
 
+ MenuItem::make(
+     static fn() => 'CategoryResource',
+     new CategoryResourceResource()
+ ),
+
+INFO  All done.
+
+```
 ### Creating a Schema
 In the <code>builds_dir</code> directory, create a schema file, for example, <code>category.json</code>:
 ```json
@@ -75,7 +106,7 @@ A more detailed example with multiple resources and relationships can be found [
 ### Creation from sql table
 You can create a resource using a table schema.You must specify the table name and select <code>table</code> type. Example:
 ```shell
- php artisan moonshine:build users --type=table
+php artisan moonshine:build users --type=table
 ```
 Result:
 ```php
@@ -115,5 +146,3 @@ The created_at and updated_at fields will be added to your code. If you manually
 
 ### Soft deletes
 Works similarly to the `timestamps` flag and the `deleted_at` field
-
-### Be careful, at the moment all resource and model files are overwritten during generation!
